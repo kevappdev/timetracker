@@ -1,0 +1,87 @@
+{
+  "_metadata": {
+    "major_version": 1,
+    "minor_version": 1
+  },
+  "display_information": {
+    "name": "Time Tracker (Local)",
+    "description": "Zeiterfassung direkt aus Slack - Starte und stoppe deine Arbeitszeit, sieh dir Statistiken an und erhalte Zusammenfassungen.",
+    "background_color": "#1a1a1a",
+    "long_description": "Time Tracker ermöglicht es dir, deine Arbeitszeit direkt aus Slack zu verwalten. Starte und stoppe Zeiterfassungen mit einfachen Slash Commands, sieh dir deinen aktuellen Status an und erhalte tägliche oder wöchentliche Zusammenfassungen deiner Arbeitszeit."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "Time Tracker Bot",
+      "always_online": true
+    },
+    "slash_commands": [
+      {
+        "command": "/zeit-start",
+        "description": "Startet die Zeiterfassung für ein Projekt und optional ein Ticket",
+        "usage_hint": "[projekt] [ticket-nummer]",
+        "should_escape": false,
+        "url": "http://localhost:3000/api/slack/commands"
+      },
+      {
+        "command": "/zeit-stop",
+        "description": "Stoppt die laufende Zeiterfassung",
+        "should_escape": false,
+        "url": "http://localhost:3000/api/slack/commands"
+      },
+      {
+        "command": "/zeit-status",
+        "description": "Zeigt den aktuellen Status der Zeiterfassung an",
+        "should_escape": false,
+        "url": "http://localhost:3000/api/slack/commands"
+      },
+      {
+        "command": "/zeit-summary",
+        "description": "Zeigt eine Zusammenfassung der Arbeitszeit für heute, diese Woche oder diesen Monat",
+        "usage_hint": "[heute|woche|monat]",
+        "should_escape": false,
+        "url": "http://localhost:3000/api/slack/commands"
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "http://localhost:3000/api/slack/oauth/callback",
+      "https://deine-domain.com/api/slack/oauth/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "chat:write",
+        "chat:write.public",
+        "commands",
+        "users:read",
+        "users:read.email",
+        "channels:read",
+        "channels:history",
+        "groups:read",
+        "groups:history",
+        "im:read",
+        "im:history",
+        "mpim:read",
+        "mpim:history"
+      ],
+      "user": []
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "http://localhost:3000/api/slack/events",
+      "bot_events": [
+        "app_mention",
+        "message.channels"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "http://localhost:3000/api/slack/interactive"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
+
