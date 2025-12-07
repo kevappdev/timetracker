@@ -5,13 +5,27 @@ const supabase = createAdminClient();
 
 /**
  * Findet den Supabase User ID anhand der Slack User ID
+ * 
+ * Strategie:
+ * 1. Versuche direkten Lookup über Slack ID (wenn User mit Slack eingeloggt ist)
+ * 2. Fallback: E-Mail von Slack holen und User anhand der E-Mail suchen
  */
 async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
-  // 1. E-Mail von Slack holen
+  // 1. RPC Aufruf versuchen (Schneller Lookup via Identity)
+  const { data: userIdBySlackId, error: rpcError } = await supabase.rpc('get_user_by_slack_id', {
+    slack_user_id: slackUserId
+  });
+
+  if (!rpcError && userIdBySlackId) {
+    return userIdBySlackId as string;
+  }
+
+  // 2. Fallback: E-Mail Lookup
+  // E-Mail von Slack holen
   const email = await getSlackUserEmail(slackUserId);
   if (!email) return null;
 
-  // 2. User in Supabase suchen (RPC wäre sicherer, aber listUsers geht mit Service Role)
+  // User in Supabase suchen
   const { data: { users }, error } = await supabase.auth.admin.listUsers();
   
   if (error || !users) {
@@ -28,7 +42,7 @@ async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
  */
 export async function handleStart(slackUserId: string, text: string) {
   const userId = await getSupabaseUserId(slackUserId);
-  if (!userId) return 'Konnte keinen verknüpften Account finden. Bitte stelle sicher, dass deine E-Mail-Adresse in Slack und im Time Tracker übereinstimmt.';
+  if (!userId) return 'Konnte keinen verknüpften Account finden. Bitte melde dich einmal mit Slack an oder stelle sicher, dass deine E-Mail-Adressen übereinstimmen.';
 
   // Parse text: "ProjektName TicketNummer" oder "ProjektName"
   const parts = text.trim().split(' ');
@@ -224,4 +238,3 @@ export async function handleSummary(slackUserId: string, text: string) {
 
   return `📊 Zusammenfassung für *${period}*:\nGesamtzeit: *${hours}h ${minutes}m*`;
 }
-

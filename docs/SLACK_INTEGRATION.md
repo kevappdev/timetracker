@@ -15,10 +15,34 @@ Diese Anleitung führt dich Schritt für Schritt durch die Einrichtung einer Sla
 7. **Wichtig:** Ersetze `https://deine-domain.com` in den URLs mit deiner tatsächlichen Domain
 8. Für lokale Entwicklung: Verwende `slack-app-manifest-local.json` und stelle sicher, dass du einen Tunnel-Service wie [ngrok](https://ngrok.com/) verwendest
 
-## Wichtige Voraussetzung: E-Mail-Adresse
+## Wichtige Voraussetzung: User Mapping
 
-Die Integration verknüpft Slack-Benutzer mit Time Tracker-Benutzern anhand ihrer **E-Mail-Adresse**. 
-Stelle sicher, dass du in Slack dieselbe E-Mail-Adresse verwendest wie in deinem Time Tracker Account.
+Damit die App weiß, welcher Slack-User zu welchem Time Tracker-User gehört, gibt es zwei Möglichkeiten:
+
+1.  **Login mit Slack (Empfohlen):** Der Nutzer meldet sich in der Web-App mit "Mit Slack anmelden" an. Dadurch wird die Verknüpfung automatisch in der Datenbank erstellt.
+2.  **E-Mail-Abgleich:** Falls der Nutzer sich per E-Mail/Passwort anmeldet, muss die E-Mail-Adresse in Slack und im Time Tracker exakt übereinstimmen.
+
+### Datenbank-Migration erforderlich
+
+Damit der Login-Abgleich funktioniert, musst du folgende SQL-Funktion in deinem Supabase SQL Editor ausführen:
+
+```sql
+-- Helper to find Supabase User ID by Slack ID
+CREATE OR REPLACE FUNCTION public.get_user_by_slack_id(slack_user_id text)
+RETURNS uuid
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = auth, public
+AS $$
+  SELECT user_id
+  FROM auth.identities
+  WHERE provider = 'slack'
+  AND (identity_data->>'sub')::text = slack_user_id
+  LIMIT 1;
+$$;
+```
+
+(Diese Datei findest du auch unter `supabase/migrations/create_get_user_by_slack_id_function.sql`)
 
 ## Schritt 1: Umgebungsvariablen konfigurieren
 
