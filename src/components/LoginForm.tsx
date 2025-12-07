@@ -66,7 +66,7 @@ export const LoginForm: React.FC = () => {
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'slack',
+        provider: 'slack_oidc',
         options: {
           redirectTo: `${window.location.origin}/api/slack/oauth/callback`,
         },
