@@ -15,19 +15,15 @@ Diese Anleitung führt dich Schritt für Schritt durch die Einrichtung einer Sla
 7. **Wichtig:** Ersetze `https://deine-domain.com` in den URLs mit deiner tatsächlichen Domain
 8. Für lokale Entwicklung: Verwende `slack-app-manifest-local.json` und stelle sicher, dass du einen Tunnel-Service wie [ngrok](https://ngrok.com/) verwendest
 
-## Wichtige Voraussetzung: User Mapping
+## Wichtige Voraussetzung: User Mapping & Login
 
-Damit die App weiß, welcher Slack-User zu welchem Time Tracker-User gehört, gibt es zwei Möglichkeiten:
+Damit der Login-Abgleich funktioniert, müssen zwei Dinge konfiguriert sein:
 
-1.  **Login mit Slack (Empfohlen):** Der Nutzer meldet sich in der Web-App mit "Mit Slack anmelden" an. Dadurch wird die Verknüpfung automatisch in der Datenbank erstellt.
-2.  **E-Mail-Abgleich:** Falls der Nutzer sich per E-Mail/Passwort anmeldet, muss die E-Mail-Adresse in Slack und im Time Tracker exakt übereinstimmen.
+### 1. Datenbank-Funktion (im Supabase SQL Editor)
 
-### Datenbank-Migration erforderlich
-
-Damit der Login-Abgleich funktioniert, musst du folgende SQL-Funktion in deinem Supabase SQL Editor ausführen:
+Führe folgendes SQL aus, um die User-Zuordnung zu ermöglichen:
 
 ```sql
--- Helper to find Supabase User ID by Slack ID
 CREATE OR REPLACE FUNCTION public.get_user_by_slack_id(slack_user_id text)
 RETURNS uuid
 LANGUAGE sql
@@ -42,7 +38,17 @@ AS $$
 $$;
 ```
 
-(Diese Datei findest du auch unter `supabase/migrations/create_get_user_by_slack_id_function.sql`)
+### 2. Supabase Auth Provider aktivieren
+
+Damit der "Mit Slack anmelden"-Button funktioniert, musst du Slack in Supabase aktivieren:
+
+1.  Gehe zu deinem **Supabase Dashboard** -> **Authentication** -> **Providers**.
+2.  Wähle **Slack** aus.
+3.  Aktiviere **"Enable Sign in with Slack"**.
+4.  Gib die **Client ID** und das **Client Secret** deiner Slack App ein (zu finden unter *Basic Information* in deinem Slack App Dashboard).
+5.  Kopiere die **Redirect URL** (z.B. `https://dein-projekt.supabase.co/auth/v1/callback`) aus dem Supabase Dashboard.
+6.  Füge diese URL in deinem **Slack App Dashboard** unter **OAuth & Permissions** -> **Redirect URLs** hinzu.
+7.  **Speichere** die Änderungen in Supabase UND in Slack.
 
 ## Schritt 1: Umgebungsvariablen konfigurieren
 
