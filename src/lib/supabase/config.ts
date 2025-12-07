@@ -6,11 +6,13 @@
  * 
  * NEXT_PUBLIC_SUPABASE_URL=your-project-url
  * NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+ * SUPABASE_SERVICE_ROLE_KEY=your-service-role-key (nur server-side!)
  */
 
 export const supabaseConfig = {
   url: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
   anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+  serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 };
 
 /**
@@ -24,4 +26,3 @@ export function validateSupabaseConfig(): void {
     throw new Error('NEXT_PUBLIC_SUPABASE_ANON_KEY ist nicht gesetzt');
   }
 }
-
