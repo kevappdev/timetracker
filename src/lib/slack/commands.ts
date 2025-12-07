@@ -1,17 +1,18 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getSlackUserEmail } from './api';
+import { 
+  createHeaderBlock, 
+  createSectionBlock, 
+  createDividerBlock, 
+  createButton, 
+  createActionBlock 
+} from './blocks';
 
 const supabase = createAdminClient();
 
-/**
- * Findet den Supabase User ID anhand der Slack User ID
- * 
- * Strategie:
- * 1. Versuche direkten Lookup über Slack ID (wenn User mit Slack eingeloggt ist)
- * 2. Fallback: E-Mail von Slack holen und User anhand der E-Mail suchen
- */
-async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
-  // 1. RPC Aufruf versuchen (Schneller Lookup via Identity)
+// --- Core Logic Helpers ---
+
+export async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
   const { data: userIdBySlackId, error: rpcError } = await supabase.rpc('get_user_by_slack_id', {
     slack_user_id: slackUserId
   });
@@ -20,12 +21,9 @@ async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
     return userIdBySlackId as string;
   }
 
-  // 2. Fallback: E-Mail Lookup
-  // E-Mail von Slack holen
   const email = await getSlackUserEmail(slackUserId);
   if (!email) return null;
 
-  // User in Supabase suchen
   const { data: { users }, error } = await supabase.auth.admin.listUsers();
   
   if (error || !users) {
@@ -37,19 +35,76 @@ async function getSupabaseUserId(slackUserId: string): Promise<string | null> {
   return user ? user.id : null;
 }
 
-/**
- * /zeit-start
- */
+export async function startTimer(userId: string, projectId: string, ticketId: string | null = null) {
+  // Laufende prüfen
+  const { data: runningEntries } = await supabase
+    .from('time_entries')
+    .select('id')
+    .eq('user_id', userId)
+    .is('end_time', null);
+
+  if (runningEntries && runningEntries.length > 0) {
+    return { error: 'Es läuft bereits eine Zeiterfassung.' };
+  }
+
+  const { error } = await supabase
+    .from('time_entries')
+    .insert({
+      user_id: userId,
+      project_id: projectId,
+      ticket_id: ticketId,
+      start_time: new Date().toISOString(),
+    });
+
+  if (error) return { error: 'Datenbankfehler beim Starten.' };
+  return { success: true };
+}
+
+// --- Command Handlers ---
+
 export async function handleStart(slackUserId: string, text: string) {
   const userId = await getSupabaseUserId(slackUserId);
-  if (!userId) return 'Konnte keinen verknüpften Account finden. Bitte melde dich einmal mit Slack an oder stelle sicher, dass deine E-Mail-Adressen übereinstimmen.';
+  if (!userId) {
+    return {
+      text: 'Fehler',
+      blocks: [createSectionBlock('⚠️ Konnte keinen verknüpften Account finden.')]
+    };
+  }
 
-  // Parse text: "ProjektName TicketNummer" oder "ProjektName"
+  // Fall 1: Keine Argumente -> Projektwahl anzeigen
+  if (!text.trim()) {
+    const { data: projects } = await supabase
+      .from('projects')
+      .select('id, name')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (!projects || projects.length === 0) {
+      return {
+        text: 'Keine Projekte',
+        blocks: [createSectionBlock('Du hast noch keine Projekte.')]
+      };
+    }
+
+    const projectButtons = projects.map(p => 
+      createButton(p.name, 'start_project', p.id)
+    );
+
+    return {
+      text: 'Projekt wählen',
+      blocks: [
+        createHeaderBlock('⏱️ Zeiterfassung starten'),
+        createSectionBlock('Wähle ein Projekt aus:'),
+        createActionBlock(projectButtons),
+      ]
+    };
+  }
+
+  // Fall 2: Text Argumente (legacy/power user)
   const parts = text.trim().split(' ');
   let ticketNumber: number | null = null;
   let projectName = text.trim();
 
-  // Prüfen, ob das letzte Element eine Nummer ist
   if (parts.length > 1) {
     const lastPart = parts[parts.length - 1];
     if (/^#?\d+$/.test(lastPart)) {
@@ -58,123 +113,117 @@ export async function handleStart(slackUserId: string, text: string) {
     }
   }
 
-  // Projekt suchen
-  const { data: projects, error: projectError } = await supabase
+  const { data: projects } = await supabase
     .from('projects')
     .select('id, name')
     .ilike('name', projectName)
     .limit(1);
 
-  if (projectError || !projects || projects.length === 0) {
-    return `Projekt "${projectName}" nicht gefunden.`;
+  if (!projects || projects.length === 0) {
+     return {
+       text: 'Fehler',
+       blocks: [createSectionBlock(`❌ Projekt "${projectName}" nicht gefunden.`)]
+     };
   }
   const project = projects[0];
 
   let ticketId = null;
   if (ticketNumber) {
-    // Ticket suchen
-    const { data: tickets, error: ticketError } = await supabase
+    const { data: tickets } = await supabase
       .from('tickets')
-      .select('id, title')
+      .select('id')
       .eq('project_id', project.id)
       .eq('ticket_number', ticketNumber)
       .limit(1);
 
-    if (ticketError || !tickets || tickets.length === 0) {
-      return `Ticket #${ticketNumber} in Projekt "${project.name}" nicht gefunden.`;
+    if (!tickets || tickets.length === 0) {
+       return {
+         text: 'Fehler',
+         blocks: [createSectionBlock(`❌ Ticket #${ticketNumber} nicht gefunden.`)]
+       };
     }
     ticketId = tickets[0].id;
   }
 
-  // Laufende Zeiterfassung prüfen
-  const { data: runningEntries } = await supabase
-    .from('time_entries')
-    .select('id')
-    .eq('user_id', userId)
-    .is('end_time', null);
-
-  if (runningEntries && runningEntries.length > 0) {
-    return 'Es läuft bereits eine Zeiterfassung. Bitte beende diese zuerst mit `/zeit-stop`.';
+  const result = await startTimer(userId, project.id, ticketId);
+  if (result.error) {
+    return {
+      text: 'Fehler',
+      blocks: [createSectionBlock(`⚠️ ${result.error}`)]
+    };
   }
 
-  // Neue Zeiterfassung starten
-  const { error: insertError } = await supabase
-    .from('time_entries')
-    .insert({
-      user_id: userId,
-      project_id: project.id,
-      ticket_id: ticketId,
-      start_time: new Date().toISOString(),
-    });
-
-  if (insertError) {
-    console.error('Error starting timer:', insertError);
-    return 'Fehler beim Starten der Zeiterfassung.';
-  }
-
-  return `Zeiterfassung gestartet für Projekt *${project.name}*${ticketId ? ` (Ticket #${ticketNumber})` : ''}.`;
+  return {
+    text: 'Gestartet',
+    blocks: [
+      createSectionBlock(`✅ Zeiterfassung gestartet für *${project.name}*${ticketId ? ` (Ticket #${ticketNumber})` : ''}.`),
+      createActionBlock([createButton('Stoppen', 'stop_timer', 'stop', 'danger')])
+    ]
+  };
 }
 
-/**
- * /zeit-stop
- */
 export async function handleStop(slackUserId: string) {
   const userId = await getSupabaseUserId(slackUserId);
-  if (!userId) return 'Konnte keinen verknüpften Account finden.';
+  if (!userId) return { text: 'User nicht gefunden' };
 
-  // Laufende Zeiterfassung suchen
-  const { data: entries, error } = await supabase
+  const { data: entries } = await supabase
     .from('time_entries')
     .select('id, start_time, projects(name), tickets(ticket_number, title)')
     .eq('user_id', userId)
     .is('end_time', null)
     .limit(1);
 
-  if (error || !entries || entries.length === 0) {
-    return 'Es läuft aktuell keine Zeiterfassung.';
+  if (!entries || entries.length === 0) {
+    return {
+      text: 'Keine Zeiterfassung',
+      blocks: [createSectionBlock('Es läuft aktuell keine Zeiterfassung.')]
+    };
   }
 
   const entry = entries[0];
   const endTime = new Date().toISOString();
 
-  // Zeiterfassung beenden
-  const { error: updateError } = await supabase
+  await supabase
     .from('time_entries')
     .update({ end_time: endTime })
     .eq('id', entry.id);
 
-  if (updateError) {
-    return 'Fehler beim Stoppen der Zeiterfassung.';
-  }
-
-  // Dauer berechnen (optional für die Antwort)
   const durationMs = new Date(endTime).getTime() - new Date(entry.start_time).getTime();
   const durationMinutes = Math.round(durationMs / 1000 / 60);
   const hours = Math.floor(durationMinutes / 60);
   const minutes = durationMinutes % 60;
 
   const project = Array.isArray(entry.projects) ? entry.projects[0] : entry.projects;
-  const ticket = Array.isArray(entry.tickets) ? entry.tickets[0] : entry.tickets;
-
-  return `Zeiterfassung beendet für *${project?.name || 'Unbekannt'}* (${hours}h ${minutes}m).`;
+  
+  return {
+    text: 'Gestoppt',
+    blocks: [
+      createHeaderBlock('🏁 Zeiterfassung beendet'),
+      createSectionBlock(`*${project?.name || 'Unbekannt'}*`),
+      createSectionBlock(`Dauer: *${hours}h ${minutes}m*`),
+    ]
+  };
 }
 
-/**
- * /zeit-status
- */
 export async function handleStatus(slackUserId: string) {
   const userId = await getSupabaseUserId(slackUserId);
-  if (!userId) return 'Konnte keinen verknüpften Account finden.';
+  if (!userId) return { text: 'User nicht gefunden' };
 
-  const { data: entries, error } = await supabase
+  const { data: entries } = await supabase
     .from('time_entries')
     .select('start_time, projects(name), tickets(ticket_number, title)')
     .eq('user_id', userId)
     .is('end_time', null)
     .limit(1);
 
-  if (error || !entries || entries.length === 0) {
-    return 'Aktuell läuft keine Zeiterfassung.';
+  if (!entries || entries.length === 0) {
+     return {
+       text: 'Status',
+       blocks: [
+         createSectionBlock('💤 Aktuell läuft keine Zeiterfassung.'),
+         createActionBlock([createButton('Zeiterfassung starten', 'open_start_modal', 'start', 'primary')])
+       ]
+     };
   }
 
   const entry = entries[0];
@@ -188,53 +237,57 @@ export async function handleStatus(slackUserId: string) {
   const project = Array.isArray(entry.projects) ? entry.projects[0] : entry.projects;
   const ticket = Array.isArray(entry.tickets) ? entry.tickets[0] : entry.tickets;
 
-  let message = `⏱️ Läuft seit ${hours}h ${minutes}m\n`;
-  message += `📂 Projekt: *${project?.name || 'Unbekannt'}*\n`;
-  if (ticket) {
-    message += `🎫 Ticket: #${ticket.ticket_number} - ${ticket.title}`;
-  }
-
-  return message;
+  return {
+    text: 'Status',
+    blocks: [
+      createHeaderBlock('⏱️ Aktuelle Zeiterfassung'),
+      createSectionBlock(`Läuft seit: *${hours}h ${minutes}m*`),
+      createDividerBlock(),
+      createSectionBlock(`📂 Projekt: *${project?.name}*`),
+      ticket ? createSectionBlock(`🎫 Ticket: *#${ticket.ticket_number} - ${ticket.title}*`) : undefined,
+      createDividerBlock(),
+      createActionBlock([createButton('Stoppen', 'stop_timer', 'stop', 'danger')])
+    ].filter(Boolean)
+  };
 }
 
-/**
- * /zeit-summary
- */
 export async function handleSummary(slackUserId: string, text: string) {
   const userId = await getSupabaseUserId(slackUserId);
-  if (!userId) return 'Konnte keinen verknüpften Account finden.';
+  if (!userId) return { text: 'User nicht gefunden' };
 
   const period = text.trim().toLowerCase() || 'heute';
   let startDate = new Date();
   let endDate = new Date();
-  
-  // Datumsgrenzen berechnen
   startDate.setHours(0, 0, 0, 0);
   endDate.setHours(23, 59, 59, 999);
 
   if (period === 'woche') {
-    const day = startDate.getDay();
-    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Montag
-    startDate.setDate(diff);
+      const day = startDate.getDay();
+      const diff = startDate.getDate() - day + (day === 0 ? -6 : 1);
+      startDate.setDate(diff);
   } else if (period === 'monat') {
-    startDate.setDate(1);
+      startDate.setDate(1);
   }
 
-  const { data: entries, error } = await supabase
-    .from('time_entries')
-    .select('duration_minutes')
-    .eq('user_id', userId)
-    .gte('start_time', startDate.toISOString())
-    .lte('start_time', endDate.toISOString())
-    .not('end_time', 'is', null);
+  const { data: entries } = await supabase
+      .from('time_entries')
+      .select('duration_minutes')
+      .eq('user_id', userId)
+      .gte('start_time', startDate.toISOString())
+      .lte('start_time', endDate.toISOString())
+      .not('end_time', 'is', null);
 
-  if (error || !entries) {
-    return 'Fehler beim Abrufen der Zusammenfassung.';
-  }
+  if (!entries) return { text: 'Fehler' };
 
   const totalMinutes = entries.reduce((acc, curr) => acc + (curr.duration_minutes || 0), 0);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
 
-  return `📊 Zusammenfassung für *${period}*:\nGesamtzeit: *${hours}h ${minutes}m*`;
+  return {
+    text: 'Summary',
+    blocks: [
+      createHeaderBlock(`📊 Zusammenfassung (${period})`),
+      createSectionBlock(`Gesamtzeit: *${hours}h ${minutes}m*`)
+    ]
+  };
 }
